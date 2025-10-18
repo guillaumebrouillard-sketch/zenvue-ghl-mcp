@@ -1,1 +1,13 @@
+{
+  "name": "zenvue-ghl-mcp",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "latest",
+    "express": "latest",
+    "node-fetch": "latest"
+  },
+  "scripts": {
+    "start": "node index.js"
+  }
+}
 
