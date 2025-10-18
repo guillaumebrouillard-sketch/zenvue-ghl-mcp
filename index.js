@@ -1,8 +1,9 @@
 import express from "express";
 import fetch from "node-fetch";
 import http from "http";
-import { Server, connect } from "@modelcontextprotocol/sdk/server/index.js"; // ⬅️ import direct
+import { Server } from "@modelcontextprotocol/sdk/server/index.js"; // toujours présent
 
+// On n'importe PAS createTool du SDK (les chemins bougent selon versions)
 const createTool = (def) => def;
 
 // ===== Config =====
@@ -39,7 +40,7 @@ async function ghlFetch(path, { method = "GET", query = {}, body } = {}) {
   return data;
 }
 
-// ===== Tools =====
+// ===== Tools (simples, centrés opportunités) =====
 const listOpportunitiesByContact = createTool({
   name: "list_opportunities_by_contact",
   description: "Lister les opportunités d’un contact (par contactId).",
@@ -136,7 +137,37 @@ app.use((req, _res, next) => {
   next();
 });
 
-const serverMCP = new Server({ name: "zenvue-ghl-basic", version: "1.5.0", tools });
+const serverMCP = new Server({ name: "zenvue-ghl-basic", version: "1.6.0", tools });
+
+// Fonction utilitaire : trouver dynamiquement une implémentation de "connect"
+async function connectCompat({ req, res, server }) {
+  // Essai 1 : module dédié connect.js (certaines versions v1)
+  try {
+    const mod = await import("@modelcontextprotocol/sdk/server/connect.js");
+    if (typeof mod.connect === "function") {
+      return await mod.connect({ req, res, server });
+    }
+  } catch (_) {}
+
+  // Essai 2 : export "connect" depuis server/index.js (autres builds)
+  try {
+    const mod = await import("@modelcontextprotocol/sdk/server/index.js");
+    if (typeof mod.connect === "function") {
+      return await mod.connect({ req, res, server });
+    }
+  } catch (_) {}
+
+  // Essai 3 : ancienne API handleSSE
+  if (typeof server.handleSSE === "function") {
+    return server.handleSSE(req, res);
+  }
+
+  // Échec : on renvoie un message clair
+  res.status(501).json({
+    error: "MCP_CONNECTOR_NOT_FOUND",
+    message: "Aucune méthode 'connect' ou 'handleSSE' disponible dans le SDK MCP. Veuillez vérifier la version du paquet @modelcontextprotocol/sdk."
+  });
+}
 
 // Preflight/compat
 app.options("/sse", (_req, res) => res.status(204).end());
@@ -144,20 +175,16 @@ app.head("/sse", (_req, res) => res.status(200).end());
 app.options("/", (_req, res) => res.status(204).end());
 app.head("/", (_req, res) => res.status(200).end());
 
-// SSE attendu (SDK v1.x) — accepte GET et POST
-app.get("/sse", async (req, res) => {
-  await connect({ req, res, server: serverMCP });
-});
-app.post("/sse", async (req, res) => {
-  await connect({ req, res, server: serverMCP });
-});
+// SSE attendu (accepte GET et POST)
+app.get("/sse", async (req, res) => connectCompat({ req, res, server: serverMCP }));
+app.post("/sse", async (req, res) => connectCompat({ req, res, server: serverMCP }));
 
-// Manifest JSON (racine)
+// Manifest JSON (racine) — pour que ChatGPT comprenne le serveur
 app.get("/", (_req, res) => {
   res.type("application/json").send(JSON.stringify({
     name: "ZenVue GHL MCP",
     description: "Connecteur ChatGPT ↔ GoHighLevel (notes, tâches, rendez-vous sur opportunités).",
-    version: "1.5.0",
+    version: "1.6.0",
     server: {
       url: "https://zenvue-ghl-mcp.onrender.com/sse",
       protocol: "mcp",
