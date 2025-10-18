@@ -1,7 +1,7 @@
 import express from "express";
 import fetch from "node-fetch";
 import http from "http";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { Server, connect } from "@modelcontextprotocol/sdk/server/index.js"; // ⬅️ import direct
 
 const createTool = (def) => def;
 
@@ -109,7 +109,7 @@ const scheduleAppointment = createTool({
     ghlFetch("/calendars/appointments", { method: "POST", body: input })
 });
 
-// ===== Serveur MCP =====
+// ===== App/Server =====
 const tools = [
   listOpportunitiesByContact,
   addOpportunityNote,
@@ -119,52 +119,56 @@ const tools = [
 
 const app = express();
 
-// Petit logging pour diagnostiquer /sse
+// CORS + no-cache (utile pour proxies/test)
+app.use((req, res, next) => {
+  res.set({
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS,HEAD",
+    "Access-Control-Allow-Headers": "*",
+    "Cache-Control": "no-cache"
+  });
+  next();
+});
+
+// Logging
 app.use((req, _res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
   next();
 });
 
-const serverMCP = new Server({ name: "zenvue-ghl-basic", version: "1.3.0", tools });
+const serverMCP = new Server({ name: "zenvue-ghl-basic", version: "1.5.0", tools });
 
-// Preflight & compat pour certains reverse proxies
-app.options("/sse", (req, res) => {
-  res.set({
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,OPTIONS,HEAD",
-    "Access-Control-Allow-Headers": "*",
-    "Cache-Control": "no-cache"
-  });
-  return res.status(204).end();
-});
-
+// Preflight/compat
+app.options("/sse", (_req, res) => res.status(204).end());
 app.head("/sse", (_req, res) => res.status(200).end());
+app.options("/", (_req, res) => res.status(204).end());
+app.head("/", (_req, res) => res.status(200).end());
 
-// Endpoint SSE attendu par ChatGPT (SDK v1.x)
+// SSE attendu (SDK v1.x) — accepte GET et POST
 app.get("/sse", async (req, res) => {
-  const { connect } = await import("@modelcontextprotocol/sdk/server/connect.js");
+  await connect({ req, res, server: serverMCP });
+});
+app.post("/sse", async (req, res) => {
   await connect({ req, res, server: serverMCP });
 });
 
-// Manifest JSON lisible à la racine (évite 502)
+// Manifest JSON (racine)
 app.get("/", (_req, res) => {
-  res.json({
+  res.type("application/json").send(JSON.stringify({
     name: "ZenVue GHL MCP",
     description: "Connecteur ChatGPT ↔ GoHighLevel (notes, tâches, rendez-vous sur opportunités).",
-    version: "1.3.0",
+    version: "1.5.0",
     server: {
       url: "https://zenvue-ghl-mcp.onrender.com/sse",
       protocol: "mcp",
       authentication: "none"
     },
     tools: tools.map(t => ({ name: t.name, description: t.description }))
-  });
+  }));
 });
 
 const port = process.env.PORT || 3000;
 const nodeServer = http.createServer(app);
-
-// Timeouts “safe” pour SSE
 nodeServer.keepAliveTimeout = 65_000;
 nodeServer.headersTimeout = 70_000;
 
