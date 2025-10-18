@@ -5,6 +5,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 
 const createTool = (def) => def;
 
+// ===== Config =====
 const GHL_BASE = "https://services.leadconnectorhq.com";
 const GHL_VERSION = "2021-07-28";
 const GHL_API_KEY = process.env.GHL_API_KEY;
@@ -15,13 +16,13 @@ if (!GHL_API_KEY || !LOCATION_ID) {
   process.exit(1);
 }
 
-// === helper générique ===
+// ===== Helper HTTP GHL =====
 async function ghlFetch(path, { method = "GET", query = {}, body } = {}) {
   const url = new URL(path, GHL_BASE);
   if (!("locationId" in query)) query.locationId = LOCATION_ID;
-  Object.entries(query).forEach(([k, v]) => {
+  for (const [k, v] of Object.entries(query)) {
     if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, v);
-  });
+  }
   const res = await fetch(url.toString(), {
     method,
     headers: {
@@ -33,13 +34,12 @@ async function ghlFetch(path, { method = "GET", query = {}, body } = {}) {
     body: body ? JSON.stringify(body) : undefined
   });
   const text = await res.text();
-  let data;
-  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+  let data; try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
   if (!res.ok) throw new Error(`GHL ${res.status}: ${JSON.stringify(data)}`);
   return data;
 }
 
-// === outils simples ===
+// ===== Tools =====
 const listOpportunitiesByContact = createTool({
   name: "list_opportunities_by_contact",
   description: "Lister les opportunités d’un contact (par contactId).",
@@ -79,7 +79,7 @@ const createOpportunityTask = createTool({
     properties: {
       opportunityId: { type: "string" },
       title: { type: "string" },
-      dueDateTime: { type: "string" },
+      dueDateTime: { type: "string", description: "ISO 8601 ex: 2025-10-20T08:30:00-04:00" },
       notes: { type: "string" }
     }
   },
@@ -109,7 +109,7 @@ const scheduleAppointment = createTool({
     ghlFetch("/calendars/appointments", { method: "POST", body: input })
 });
 
-// === serveur MCP ===
+// ===== Serveur MCP =====
 const tools = [
   listOpportunitiesByContact,
   addOpportunityNote,
@@ -118,21 +118,40 @@ const tools = [
 ];
 
 const app = express();
-const serverMCP = new Server({ name: "zenvue-ghl-basic", version: "1.2.0", tools });
 
-// ✅ endpoint MCP
+// Petit logging pour diagnostiquer /sse
+app.use((req, _res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+  next();
+});
+
+const serverMCP = new Server({ name: "zenvue-ghl-basic", version: "1.3.0", tools });
+
+// Preflight & compat pour certains reverse proxies
+app.options("/sse", (req, res) => {
+  res.set({
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET,OPTIONS,HEAD",
+    "Access-Control-Allow-Headers": "*",
+    "Cache-Control": "no-cache"
+  });
+  return res.status(204).end();
+});
+
+app.head("/sse", (_req, res) => res.status(200).end());
+
+// Endpoint SSE attendu par ChatGPT (SDK v1.x)
 app.get("/sse", async (req, res) => {
   const { connect } = await import("@modelcontextprotocol/sdk/server/connect.js");
   await connect({ req, res, server: serverMCP });
 });
 
-// ✅ endpoint manifest pour ChatGPT (corrige le 502)
-app.get("/", (req, res) => {
+// Manifest JSON lisible à la racine (évite 502)
+app.get("/", (_req, res) => {
   res.json({
     name: "ZenVue GHL MCP",
-    description:
-      "Connecteur entre ChatGPT et GoHighLevel pour ajouter des notes, tâches et rendez-vous.",
-    version: "1.2.0",
+    description: "Connecteur ChatGPT ↔ GoHighLevel (notes, tâches, rendez-vous sur opportunités).",
+    version: "1.3.0",
     server: {
       url: "https://zenvue-ghl-mcp.onrender.com/sse",
       protocol: "mcp",
@@ -143,4 +162,10 @@ app.get("/", (req, res) => {
 });
 
 const port = process.env.PORT || 3000;
-http.createServer(app).listen(port, () => console.log(`✅ MCP listening on ${port}`));
+const nodeServer = http.createServer(app);
+
+// Timeouts “safe” pour SSE
+nodeServer.keepAliveTimeout = 65_000;
+nodeServer.headersTimeout = 70_000;
+
+nodeServer.listen(port, () => console.log(`✅ MCP listening on ${port}`));
