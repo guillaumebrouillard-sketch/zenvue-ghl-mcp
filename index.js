@@ -1,14 +1,11 @@
 import express from "express";
 import fetch from "node-fetch";
 import http from "http";
-
-// SDK MCP minimal (on garde seulement Server)
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 
-// SDK v1.x n’a plus createTool → stub simple compatible
+// === Correctif v1.x : remplacer handleSSE par connect()
 const createTool = (def) => def;
 
-// ================== CONFIG ==================
 const GHL_BASE = "https://services.leadconnectorhq.com";
 const GHL_VERSION = "2021-07-28";
 
@@ -20,7 +17,7 @@ if (!GHL_API_KEY || !LOCATION_ID) {
   process.exit(1);
 }
 
-// ================== HELPERS ==================
+// ---------- Helper pour requêtes LeadConnector ----------
 async function ghlFetch(path, { method = "GET", query = {}, body } = {}) {
   const url = new URL(path, GHL_BASE);
   if (!("locationId" in query)) query.locationId = LOCATION_ID;
@@ -49,9 +46,7 @@ async function ghlFetch(path, { method = "GET", query = {}, body } = {}) {
   return data;
 }
 
-// ================== TOOLS ==================
-
-// A) Lister les opportunités d’un contact
+// ---------- Tools ----------
 const listOpportunitiesByContact = createTool({
   name: "list_opportunities_by_contact",
   description: "Lister les opportunités d’un contact (par contactId).",
@@ -64,7 +59,6 @@ const listOpportunitiesByContact = createTool({
     ghlFetch("/opportunities/", { query: { contactId, limit: 50 } })
 });
 
-// B) Ajouter une note à une opportunité
 const addOpportunityNote = createTool({
   name: "add_opportunity_note",
   description: "Ajouter une note dans une opportunité (champ Notes).",
@@ -83,7 +77,6 @@ const addOpportunityNote = createTool({
     })
 });
 
-// C) Créer une tâche liée à une opportunité
 const createOpportunityTask = createTool({
   name: "create_opportunity_task",
   description: "Créer une tâche (rappel) liée à une opportunité.",
@@ -104,7 +97,6 @@ const createOpportunityTask = createTool({
     })
 });
 
-// D) Planifier un rendez-vous
 const scheduleAppointment = createTool({
   name: "schedule_appointment",
   description: "Planifier un rendez-vous pour un contact.",
@@ -124,7 +116,7 @@ const scheduleAppointment = createTool({
     ghlFetch("/calendars/appointments", { method: "POST", body: input })
 });
 
-// ================== SERVEUR MCP ==================
+// ---------- Serveur MCP ----------
 const tools = [
   listOpportunitiesByContact,
   addOpportunityNote,
@@ -133,11 +125,15 @@ const tools = [
 ];
 
 const app = express();
-const serverMCP = new Server({ name: "zenvue-ghl-basic", version: "1.0.0", tools });
+const serverMCP = new Server({ name: "zenvue-ghl-basic", version: "1.1.0", tools });
 
-app.get("/sse", (req, res) => serverMCP.handleSSE(req, res));
+// ✅ Nouvelle version compatible du point /sse
+app.get("/sse", async (req, res) => {
+  const { connect } = await import("@modelcontextprotocol/sdk/server/connect.js");
+  await connect({ req, res, server: serverMCP });
+});
+
 app.get("/", (req, res) => res.send("ZenVue GHL MCP OK (Basic Ops)"));
 
 const port = process.env.PORT || 3000;
 http.createServer(app).listen(port, () => console.log(`✅ MCP listening on ${port}`));
-
