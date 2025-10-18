@@ -3,12 +3,10 @@ import fetch from "node-fetch";
 import http from "http";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 
-// === Correctif v1.x : remplacer handleSSE par connect()
 const createTool = (def) => def;
 
 const GHL_BASE = "https://services.leadconnectorhq.com";
 const GHL_VERSION = "2021-07-28";
-
 const GHL_API_KEY = process.env.GHL_API_KEY;
 const LOCATION_ID = process.env.LOCATION_ID;
 
@@ -17,14 +15,13 @@ if (!GHL_API_KEY || !LOCATION_ID) {
   process.exit(1);
 }
 
-// ---------- Helper pour requêtes LeadConnector ----------
+// === helper générique ===
 async function ghlFetch(path, { method = "GET", query = {}, body } = {}) {
   const url = new URL(path, GHL_BASE);
   if (!("locationId" in query)) query.locationId = LOCATION_ID;
   Object.entries(query).forEach(([k, v]) => {
     if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, v);
   });
-
   const res = await fetch(url.toString(), {
     method,
     headers: {
@@ -35,18 +32,14 @@ async function ghlFetch(path, { method = "GET", query = {}, body } = {}) {
     },
     body: body ? JSON.stringify(body) : undefined
   });
-
   const text = await res.text();
   let data;
   try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
-
-  if (!res.ok) {
-    throw new Error(`GHL ${res.status}: ${JSON.stringify(data)}`);
-  }
+  if (!res.ok) throw new Error(`GHL ${res.status}: ${JSON.stringify(data)}`);
   return data;
 }
 
-// ---------- Tools ----------
+// === outils simples ===
 const listOpportunitiesByContact = createTool({
   name: "list_opportunities_by_contact",
   description: "Lister les opportunités d’un contact (par contactId).",
@@ -61,7 +54,7 @@ const listOpportunitiesByContact = createTool({
 
 const addOpportunityNote = createTool({
   name: "add_opportunity_note",
-  description: "Ajouter une note dans une opportunité (champ Notes).",
+  description: "Ajouter une note dans une opportunité.",
   inputSchema: {
     type: "object",
     required: ["opportunityId", "text"],
@@ -86,7 +79,7 @@ const createOpportunityTask = createTool({
     properties: {
       opportunityId: { type: "string" },
       title: { type: "string" },
-      dueDateTime: { type: "string", description: "ISO ex: 2025-10-20T08:30:00-04:00" },
+      dueDateTime: { type: "string" },
       notes: { type: "string" }
     }
   },
@@ -116,7 +109,7 @@ const scheduleAppointment = createTool({
     ghlFetch("/calendars/appointments", { method: "POST", body: input })
 });
 
-// ---------- Serveur MCP ----------
+// === serveur MCP ===
 const tools = [
   listOpportunitiesByContact,
   addOpportunityNote,
@@ -125,15 +118,29 @@ const tools = [
 ];
 
 const app = express();
-const serverMCP = new Server({ name: "zenvue-ghl-basic", version: "1.1.0", tools });
+const serverMCP = new Server({ name: "zenvue-ghl-basic", version: "1.2.0", tools });
 
-// ✅ Nouvelle version compatible du point /sse
+// ✅ endpoint MCP
 app.get("/sse", async (req, res) => {
   const { connect } = await import("@modelcontextprotocol/sdk/server/connect.js");
   await connect({ req, res, server: serverMCP });
 });
 
-app.get("/", (req, res) => res.send("ZenVue GHL MCP OK (Basic Ops)"));
+// ✅ endpoint manifest pour ChatGPT (corrige le 502)
+app.get("/", (req, res) => {
+  res.json({
+    name: "ZenVue GHL MCP",
+    description:
+      "Connecteur entre ChatGPT et GoHighLevel pour ajouter des notes, tâches et rendez-vous.",
+    version: "1.2.0",
+    server: {
+      url: "https://zenvue-ghl-mcp.onrender.com/sse",
+      protocol: "mcp",
+      authentication: "none"
+    },
+    tools: tools.map(t => ({ name: t.name, description: t.description }))
+  });
+});
 
 const port = process.env.PORT || 3000;
 http.createServer(app).listen(port, () => console.log(`✅ MCP listening on ${port}`));
