@@ -1,0 +1,28 @@
+{
+  "name": "ZenVue GHL MCP",
+  "description": "Connecteur entre ChatGPT et GoHighLevel pour ajouter des notes, des tâches et des rendez-vous aux opportunités.",
+  "version": "1.0.0",
+  "server": {
+    "url": "https://zenvue-ghl-mcp.onrender.com/sse",
+    "protocol": "mcp",
+    "authentication": "none"
+  },
+  "tools": [
+    {
+      "name": "add_opportunity_note",
+      "description": "Ajouter une note dans une opportunité GoHighLevel."
+    },
+    {
+      "name": "create_opportunity_task",
+      "description": "Créer une tâche reliée à une opportunité."
+    },
+    {
+      "name": "schedule_appointment",
+      "description": "Planifier un rendez-vous pour un contact GoHighLevel."
+    },
+    {
+      "name": "list_opportunities_by_contact",
+      "description": "Lister les opportunités d’un contact."
+    }
+  ]
+}
